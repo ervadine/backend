@@ -388,16 +388,23 @@ static async getOrCreateCart(userId, sessionId, shouldCreate = false) {  // ← 
     };
   }
 
-  /**
-   * GET /api/cart/items - Get user's cart with optimized response
-   */
 
+
+
+/**
+ * GET /api/cart/items - Get user's cart with session ID in response
+ */
 static getCart = asyncHandler(async (req, res) => {
   const userId = req.user?._id || null;
   let sessionId = req.cookies?.cartSessionId;
+  
+  // Also check headers for session ID (for localStorage fallback)
+  if (!sessionId && req.headers['x-cart-session-id']) {
+    sessionId = req.headers['x-cart-session-id'];
+    console.log('📦 Using session ID from header:', sessionId);
+  }
 
-  // Don't generate session ID here - only get existing cart
-  // Pass false to NOT create a cart
+  // Pass false to NOT create a cart automatically
   const cart = await CartController.getOrCreateCart(userId, sessionId, false);
   
   // If no cart exists, return empty cart response
@@ -424,19 +431,27 @@ static getCart = asyncHandler(async (req, res) => {
   
   res.status(200).json({
     success: true,
-    data: formattedCart,
+    data: {
+      ...formattedCart,
+      sessionId: sessionId // Return session ID for localStorage
+    },
     message: 'Cart retrieved successfully'
   });
 });
 
-  /**
-   * POST /api/cart/add-item - Add item to cart
-   */
-
+/**
+ * POST /api/cart/add-item - Add item to cart with session ID in response
+ */
 static addToCart = asyncHandler(async (req, res) => {
   const { productId, selectedColor, selectedSize, quantity = 1 } = req.body;
   const userId = req.user?._id || null;
   let sessionId = req.cookies?.cartSessionId;
+  
+  // Also check headers for session ID
+  if (!sessionId && req.headers['x-cart-session-id']) {
+    sessionId = req.headers['x-cart-session-id'];
+    console.log('📦 Using session ID from header for add:', sessionId);
+  }
 
   // Validate required fields
   if (!productId) {
@@ -451,6 +466,7 @@ static addToCart = asyncHandler(async (req, res) => {
   if (!sessionId && !userId) {
     sessionId = CartController.generateSessionId();
     CartController.setCartCookie(res, sessionId);
+    console.log('🆕 Generated new session ID:', sessionId);
   }
 
   // Extract string values from objects if needed
@@ -511,8 +527,49 @@ static addToCart = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     success: true,
-    data: formattedCart,
+    data: {
+      ...formattedCart,
+      sessionId: sessionId // Return session ID for localStorage
+    },
     message: 'Item added to cart successfully'
+  });
+});
+
+/**
+ * GET /api/cart/count - Get cart count with session support
+ */
+static getCartCount = asyncHandler(async (req, res) => {
+  const userId = req.user?._id;
+  let sessionId = req.cookies?.cartSessionId;
+  
+  // Also check headers for session ID
+  if (!sessionId && req.headers['x-cart-session-id']) {
+    sessionId = req.headers['x-cart-session-id'];
+  }
+
+  // Pass false to NOT create a cart
+  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+  
+  if (!cart) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        itemCount: 0,
+        uniqueItems: 0,
+        sessionId: sessionId
+      },
+      message: 'Cart count retrieved successfully'
+    });
+  }
+  
+  res.status(200).json({
+    success: true,
+    data: {
+      itemCount: cart.itemCount,
+      uniqueItems: cart.items.length,
+      sessionId: sessionId
+    },
+    message: 'Cart count retrieved successfully'
   });
 });
 
@@ -872,34 +929,8 @@ static addToCart = asyncHandler(async (req, res) => {
    * Get cart count (for badge/header display)
    */
 
-static getCartCount = asyncHandler(async (req, res) => {
-  const userId = req.user?._id;
-  const sessionId = req.cookies?.cartSessionId;
 
-  // Pass false to NOT create a cart
-  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
   
-  // If no cart exists, return zero count
-  if (!cart) {
-    return res.status(200).json({
-      success: true,
-      data: {
-        itemCount: 0,
-        uniqueItems: 0
-      },
-      message: 'Cart count retrieved successfully'
-    });
-  }
-  
-  res.status(200).json({
-    success: true,
-    data: {
-      itemCount: cart.itemCount,
-      uniqueItems: cart.items.length
-    },
-    message: 'Cart count retrieved successfully'
-  });
-});
 
   /**
    * Check if product is in cart
