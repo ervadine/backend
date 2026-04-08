@@ -1,3 +1,7 @@
+
+
+
+
 const express = require('express');
 const dotenv = require('dotenv');
 const cookieParser = require('cookie-parser');
@@ -29,108 +33,44 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // Database connection
 connectDB();
 
-// Enhanced CORS configuration for Edge compatibility
-const allowedOrigins = ALLOWED_ORIGINS 
-  ? ALLOWED_ORIGINS.split(',') 
-  : ['localhost:3000', 'https://backend-x6tz.onrender.com'];
 
-console.log('🔄 Allowed CORS origins:', allowedOrigins);
 
-// Enhanced CORS middleware - MUST BE FIRST MIDDLEWARE
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// CORS configuration
+const allowedOrigins = ALLOWED_ORIGINS.splice(',') 
+
+
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl requests, Postman)
+    // Allow requests with no origin (like mobile apps, curl requests)
     if (!origin) return callback(null, true);
-    
-    // Allow all localhost and 127.0.0.1 variations for Edge
-    if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('0.0.0.0')) {
-      return callback(null, true);
-    }
     
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      console.log('❌ CORS blocked for origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'x-cart-session-id',
-    'x-requested-with',
-    'Cookie',
-    'Cookies',
-    'Accept',
-    'Origin',
-    'X-Requested-With',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Credentials'
-  ],
-  exposedHeaders: [
-    'Set-Cookie',
-    'Date',
-    'ETag',
-    'Content-Length',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Credentials',
-    'Content-Disposition'
-  ],
-  credentials: true, // THIS IS CRITICAL for cookies
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
-  maxAge: 86400 // 24 hours
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
-// Handle preflight requests explicitly
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 
-    'Content-Type, Authorization, x-cart-session-id, x-requested-with, Cookie, Cookies, Accept, Origin, X-Requested-With');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400');
-  res.status(204).send();
-});
+// Logging
+if (NODE_ENV === 'DEVELOPMENT') {
+  app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined', { 
+    stream: logger.stream || process.stdout 
+  }));
+}
 
-// Security middleware with Edge compatibility
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginEmbedderPolicy: false,
-  crossOriginOpenerPolicy: false,
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:", "http:"],
-      connectSrc: ["'self'", "https:", "http:", "ws:", "wss:"],
-    },
-  }
-}));
 
-app.use(mongoSanitize());
-app.use(compression());
 
-// Enhanced cookie parser - must come before other middleware
-app.use(cookieParser());
-
-// Request parsing with increased limits for Edge
-app.use(bodyParser.urlencoded({ 
-  extended: true, 
-  limit: '50mb',
-  parameterLimit: 100000
-}));
-app.use(express.json({ 
-  limit: '50mb',
-  type: ['application/json', 'text/plain'] // Edge sometimes sends wrong content-type
-}));
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: '50mb',
-  parameterLimit: 100000
-}));
 
 // Enhanced logging middleware for Edge debugging
 app.use((req, res, next) => {
@@ -334,14 +274,6 @@ server.listen(PORT, '0.0.0.0', () => { // Listen on all interfaces
   console.log('🚀 Server started successfully');
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🌐 Listening on: 0.0.0.0 (all interfaces)`);
-  console.log(`✅ CORS Enabled for:`, allowedOrigins);
-  console.log(`🍪 Cookie support: ENHANCED FOR EDGE`);
-  console.log(`🔧 Edge Debug endpoints available:`);
-  console.log(`   - GET /api/v1/debug/cookies`);
-  console.log(`   - GET /api/v1/debug/set-cookie`);
-  console.log(`   - GET /api/v1/health`);
-  console.log(`   - GET /api/v1/edge/session-check`);
-  logger.info(`Server running on port ${PORT} in ${NODE_ENV} mode`);
+ 
 });
 
