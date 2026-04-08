@@ -65,13 +65,6 @@ router.delete('/company/delete',
     companyController.deleteCompany
 );
 
-// Analytics routes (admin only)
-router.get('/company/analytics/visitors', protect, requireRole('admin'), companyController.getVisitorStats);
-router.get('/company/analytics/visitors/recent', protect, requireRole('admin'), companyController.getRecentVisitors);
-router.put('/company/analytics/settings', protect, requireRole('admin'), companyController.updateAnalyticsSettings);
-router.delete('/company/analytics/visitors/cleanup', protect, requireRole('admin'), companyController.cleanupVisitors);
-router.get('/company/analytics/demographics', protect, requireRole('admin'), companyController.getVisitorDemographics);
-router.get('/company/analytics/activity', protect, requireRole('admin'), companyController.getVisitorActivity);
-router.get('/company/analytics/visitors/export', protect, requireRole('admin'), companyController.exportVisitorData);
+
 
 module.exports = router;
