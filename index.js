@@ -77,10 +77,10 @@ app.use(cors({
     'Access-Control-Allow-Credentials',
     'Content-Disposition'
   ],
-  credentials: true, // THIS IS CRITICAL for cookies
+  credentials: true,
   preflightContinue: false,
   optionsSuccessStatus: 204,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 }));
 
 // Handle preflight requests explicitly
@@ -124,7 +124,7 @@ app.use(bodyParser.urlencoded({
 }));
 app.use(express.json({ 
   limit: '50mb',
-  type: ['application/json', 'text/plain'] // Edge sometimes sends wrong content-type
+  type: ['application/json', 'text/plain']
 }));
 app.use(express.urlencoded({ 
   extended: true, 
@@ -132,7 +132,31 @@ app.use(express.urlencoded({
   parameterLimit: 100000
 }));
 
-// Enhanced logging middleware for Edge debugging
+// Enhanced cookie settings middleware for localhost compatibility
+app.use((req, res, next) => {
+  const originalCookie = res.cookie;
+  
+  // Check if request is from localhost
+  const isLocalhost = req.headers.origin?.includes('localhost') || 
+                      req.headers.origin?.includes('127.0.0.1');
+  
+  res.cookie = function(name, value, options = {}) {
+    const edgeCompatibleOptions = {
+      httpOnly: options.httpOnly !== undefined ? options.httpOnly : true,
+      secure: !isLocalhost && NODE_ENV === 'production',
+      sameSite: isLocalhost ? 'lax' : 'none',
+      maxAge: options.maxAge || 30 * 24 * 60 * 60 * 1000,
+      path: options.path || '/',
+      domain: isLocalhost ? undefined : (NODE_ENV === 'production' ? '.onrender.com' : undefined),
+    };
+    
+    console.log(`🍪 Setting cookie: ${name}`, edgeCompatibleOptions);
+    return originalCookie.call(this, name, value, edgeCompatibleOptions);
+  };
+  next();
+});
+
+// Enhanced logging middleware for debugging
 app.use((req, res, next) => {
   console.log('=== EDGE DEBUG REQUEST ===');
   console.log('🍪 Cookies:', req.cookies);
@@ -158,7 +182,7 @@ if (NODE_ENV === 'DEVELOPMENT') {
   }));
 }
 
-// Socket.io initialization with enhanced CORS for Edge
+// Socket.io initialization
 const io = new Server(server, {
   cors: {
     origin: function(origin, callback) {
@@ -183,59 +207,23 @@ const io = new Server(server, {
     credentials: true,
   },
   transports: ['websocket', 'polling'],
-  allowEIO3: true // Allow Engine.IO v3 compatibility
+  allowEIO3: true
 });
 
-app.set('io', io);
 logger.info('Socket.IO server initialized successfully');
 
-// Middleware to attach io to request object
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
-
-// Enhanced cookie settings middleware for Edge
-app.use((req, res, next) => {
-  // Store original res.cookie function
-  const originalCookie = res.cookie;
-  
-  // Override res.cookie for Edge compatibility
-  res.cookie = function(name, value, options = {}) {
-    const edgeCompatibleOptions = {
-      httpOnly: options.httpOnly !== undefined ? options.httpOnly : true,
-      secure: NODE_ENV === 'production',
-      sameSite: NODE_ENV === 'production' ? 'none' : 'lax', // Critical for Edge
-      maxAge: options.maxAge || 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: options.path || '/',
-      domain: options.domain || (NODE_ENV === 'production' ? '.yourdomain.com' : undefined),
-      // Edge-specific flags
-      partitioned: NODE_ENV === 'production' // For Chrome but good practice
-    };
-    
-    console.log(`🍪 Setting cookie: ${name}`, edgeCompatibleOptions);
-    return originalCookie.call(this, name, value, edgeCompatibleOptions);
-  };
-  next();
-});
-
-
+// Load routes
 fs.readdirSync('./routes').forEach(routeFile => {
   if (routeFile.endsWith('.js')) {
     try {
       const route = require(`./routes/${routeFile}`);
-      const basePath = routeFile.replace('.js', '');
       app.use('/api/v1', route);
-      console.log(`✅ Loaded route: /api/v1/${basePath}`);
+      console.log(`✅ Loaded route: /api/v1/${routeFile.replace('.js', '')}`);
     } catch (error) {
       console.error(`❌ Failed to load route ${routeFile}:`, error.message);
     }
   }
 });
-
-
-
-
 
 // Serve uploaded files statically with CORS
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
@@ -245,13 +233,10 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   }
 }));
 
-
-
 // Global error handler with CORS
 app.use((error, req, res, next) => {
   console.log('❌ Global Error Handler:', error.message);
   
-  // Set CORS headers even for errors
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Credentials', 'true');
   
@@ -276,16 +261,14 @@ app.use((error, req, res, next) => {
     userAgent: req.headers['user-agent']
   });
   
-  // Enhanced error response for CORS issues
   if (message.includes('CORS')) {
     return res.status(403).json({
       error: {
         status: 403,
         message: 'CORS policy violation',
-        details: 'Request blocked by CORS policy. Please check your origin and credentials.',
+        details: 'Request blocked by CORS policy',
         allowedOrigins: allowedOrigins,
-        yourOrigin: req.headers.origin,
-        userAgent: req.headers['user-agent']
+        yourOrigin: req.headers.origin
       }
     });
   }
@@ -300,9 +283,7 @@ app.use((error, req, res, next) => {
   });
 });
 
-
-
-// Enhanced process error handlers
+// Process error handlers
 process.on('uncaughtException', (err) => {
   logger.error('UNCAUGHT EXCEPTION! Shutting down...', { 
     error: err.message,
@@ -321,7 +302,6 @@ process.on('unhandledRejection', (err) => {
   server.close(() => setTimeout(() => process.exit(1), 1000));
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('🔄 SIGTERM received, shutting down gracefully');
   server.close(() => {
@@ -330,18 +310,12 @@ process.on('SIGTERM', () => {
 });
 
 // Start server
-server.listen(PORT, '0.0.0.0', () => { // Listen on all interfaces
+server.listen(PORT, '0.0.0.0', () => {
   console.log('🚀 Server started successfully');
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌍 Environment: ${NODE_ENV}`);
   console.log(`🌐 Listening on: 0.0.0.0 (all interfaces)`);
   console.log(`✅ CORS Enabled for:`, allowedOrigins);
-  console.log(`🍪 Cookie support: ENHANCED FOR EDGE`);
-  console.log(`🔧 Edge Debug endpoints available:`);
-  console.log(`   - GET /api/v1/debug/cookies`);
-  console.log(`   - GET /api/v1/debug/set-cookie`);
-  console.log(`   - GET /api/v1/health`);
-  console.log(`   - GET /api/v1/edge/session-check`);
+  console.log(`🍪 Cookie support: ENHANCED FOR LOCALHOST`);
   logger.info(`Server running on port ${PORT} in ${NODE_ENV} mode`);
 });
-
