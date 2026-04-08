@@ -15,7 +15,7 @@ const compression = require('compression');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { Server } = require("socket.io");
-const {ALLOWED_ORIGINS} = require('./utils/allowedOrigins')
+const ALLOWED_ORIGINS = require('./utils/allowedOrigins')
 
 // Load environment variables
 dotenv.config();
@@ -276,4 +276,3 @@ server.listen(PORT, '0.0.0.0', () => { // Listen on all interfaces
   console.log(`🌍 Environment: ${NODE_ENV}`);
  
 });
-
