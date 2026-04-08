@@ -32,7 +32,7 @@ connectDB();
 // Enhanced CORS configuration for Edge compatibility
 const allowedOrigins = ALLOWED_ORIGINS 
   ? ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:3000', 'http://127.0.0.1:3000','http://10.0.0.38:8280'];
+  : ['http://localhost:3000', 'http://127.0.0.1:3000','https://backend-x6tz.onrender.com','http://10.0.0.38:8280'];
 
 console.log('🔄 Allowed CORS origins:', allowedOrigins);
 
