@@ -13,8 +13,6 @@ router.get('/company/tax-rate', companyController.getTaxSettings);
 
 
 
-router.post('/company/analytics/visitors/track', companyController.trackVisitor);
-
 // Admin routes with logo upload support
 router.post('/company/create', 
     protect, 
