@@ -520,76 +520,6 @@ class CartController {
   });
 
   /**
-   * DELETE /api/cart/delete-item/:itemId - Remove item from cart
-   */
-  static removeFromCart = asyncHandler(async (req, res) => {
-    const { itemId } = req.params;
-    const userId = req.user?._id || null;
-    let sessionId = req.cookies?.cartSessionId;
-    
-    if (!sessionId && req.headers['x-cart-session-id']) {
-      sessionId = req.headers['x-cart-session-id'];
-      console.log('📦 Using session ID from header for remove:', sessionId);
-    }
-
-    console.log('🗑️ Attempting to remove item:', { itemId, userId, sessionId });
-
-    if (!mongoose.Types.ObjectId.isValid(itemId)) {
-      throw new HttpError('Invalid cart item ID format', 400);
-    }
-
-    // Get the cart
-    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
-    
-    if (!cart) {
-      console.log('❌ No cart found');
-      return res.status(404).json({
-        success: false,
-        message: 'Cart not found'
-      });
-    }
-
-    console.log('📦 Cart found with items:', cart.items.map(i => ({
-      _id: i._id.toString(),
-      productId: i.product?._id?.toString()
-    })));
-
-    // Find the item - convert both to strings for comparison
-    const itemIndex = cart.items.findIndex(item => 
-      item._id.toString() === itemId
-    );
-
-    if (itemIndex === -1) {
-      console.log('❌ Item not found in cart. Available IDs:', cart.items.map(i => i._id.toString()));
-      throw new HttpError('Cart item not found', 404);
-    }
-
-    // Remove the item
-    const removedItem = cart.items[itemIndex];
-    cart.items.splice(itemIndex, 1);
-    cart.lastUpdated = new Date();
-    
-    await cart.save();
-    console.log('✅ Item removed successfully:', {
-      removedItemId: removedItem._id,
-      remainingItems: cart.items.length
-    });
-   
-    await cart.populate({
-      path: 'items.product',
-      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
-    });
-   
-    const formattedCart = CartController.formatCart(cart);
-
-    res.status(200).json({
-      success: true,
-      data: formattedCart,
-      message: 'Item removed from cart successfully'
-    });
-  });
-
-  /**
    * PUT /api/cart/update-item/:itemId - Update cart item quantity
    */
   static updateCartItem = asyncHandler(async (req, res) => {
@@ -647,6 +577,73 @@ class CartController {
       success: true,
       data: formattedCart,
       message: 'Cart item updated successfully'
+    });
+  });
+
+  /**
+   * DELETE /api/cart/delete-item/:itemId - Remove item from cart
+   */
+  static removeFromCart = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+      console.log('📦 Using session ID from header for remove:', sessionId);
+    }
+
+    console.log('🗑️ Attempting to remove item:', { itemId, userId, sessionId });
+
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      throw new HttpError('Invalid cart item ID format', 400);
+    }
+
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      console.log('❌ No cart found');
+      return res.status(404).json({
+        success: false,
+        message: 'Cart not found'
+      });
+    }
+
+    console.log('📦 Cart found with items:', cart.items.map(i => ({
+      _id: i._id.toString(),
+      productId: i.product?._id?.toString()
+    })));
+
+    const itemIndex = cart.items.findIndex(item => 
+      item._id.toString() === itemId
+    );
+
+    if (itemIndex === -1) {
+      console.log('❌ Item not found in cart. Available IDs:', cart.items.map(i => i._id.toString()));
+      throw new HttpError('Cart item not found', 404);
+    }
+
+    const removedItem = cart.items[itemIndex];
+    cart.items.splice(itemIndex, 1);
+    cart.lastUpdated = new Date();
+    
+    await cart.save();
+    console.log('✅ Item removed successfully:', {
+      removedItemId: removedItem._id,
+      remainingItems: cart.items.length
+    });
+   
+    await cart.populate({
+      path: 'items.product',
+      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+    });
+   
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
+      success: true,
+      data: formattedCart,
+      message: 'Item removed from cart successfully'
     });
   });
 
@@ -907,6 +904,339 @@ class CartController {
   });
 
   /**
+   * GET /api/cart/check-product - Check if product is in cart
+   */
+  static checkProductInCart = asyncHandler(async (req, res) => {
+    const { productId, selectedColor, selectedSize } = req.query;
+    const userId = req.user?._id;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    if (!productId) {
+      throw new HttpError('Product ID is required', 400);
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new HttpError('Invalid product ID', 400);
+    }
+
+    const { colorValue, sizeValue } = CartController.extractSelectionValues(selectedColor, selectedSize);
+
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          isInCart: false,
+          quantity: 0,
+          cartItemId: null
+        },
+        message: 'Product cart status retrieved successfully'
+      });
+    }
+   
+    const isInCart = cart.items.some(item =>
+      item.product._id.toString() === productId &&
+      item.selectedColor === colorValue &&
+      item.selectedSize === sizeValue
+    );
+
+    const cartItem = cart.items.find(item =>
+      item.product._id.toString() === productId &&
+      item.selectedColor === colorValue &&
+      item.selectedSize === sizeValue
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        isInCart,
+        quantity: cartItem?.quantity || 0,
+        cartItemId: cartItem?._id || null
+      },
+      message: 'Product cart status retrieved successfully'
+    });
+  });
+
+  /**
+   * GET /api/cart/validate - Validate cart before checkout
+   */
+  static validateCart = asyncHandler(async (req, res) => {
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          isValid: false,
+          errors: ['Cart is empty'],
+          warnings: [],
+          updatedItems: []
+        },
+        message: 'Cart validation completed'
+      });
+    }
+   
+    const validationResults = {
+      isValid: true,
+      errors: [],
+      warnings: [],
+      updatedItems: []
+    };
+
+    if (cart.items.length === 0) {
+      validationResults.isValid = false;
+      validationResults.errors.push('Cart is empty');
+      return res.status(200).json({
+        success: true,
+        data: validationResults,
+        message: 'Cart validation completed'
+      });
+    }
+
+    let needsSave = false;
+
+    for (const item of cart.items) {
+      try {
+        const validatedProduct = await CartController.validateProduct(
+          item.product._id.toString(),
+          item.selectedColor,
+          item.selectedSize,
+          item.quantity
+        );
+
+        if (validatedProduct.price !== item.price) {
+          validationResults.warnings.push(
+            `Price has changed for "${item.product?.name || 'Unknown'}". Old price: $${item.price}, New price: $${validatedProduct.price}`
+          );
+          item.price = validatedProduct.price;
+          validationResults.updatedItems.push(item.product?.name || 'Unknown');
+          needsSave = true;
+        }
+
+        if (userId && !item.user) {
+          item.user = userId;
+          needsSave = true;
+        }
+      } catch (error) {
+        validationResults.isValid = false;
+        validationResults.errors.push(`Validation failed for "${item.product?.name || 'Unknown'}": ${error.message}`);
+      }
+    }
+
+    if (needsSave) {
+      cart.lastUpdated = new Date();
+      await cart.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      data: validationResults,
+      message: 'Cart validation completed'
+    });
+  });
+
+  /**
+   * GET /api/cart/checkout-details - Get cart details for checkout
+   */
+  static getCheckoutDetails = asyncHandler(async (req, res) => {
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+   
+    if (!cart || cart.items.length === 0) {
+      throw new HttpError('Cart is empty', 400);
+    }
+
+    const formattedCart = CartController.formatCart(cart);
+
+    const checkoutDetails = {
+      cartId: cart._id,
+      items: formattedCart.items,
+      totals: {
+        subtotal: formattedCart.subtotal,
+        discountAmount: formattedCart.discountAmount,
+        discountedTotal: formattedCart.discountedTotal,
+        shipping: formattedCart.discountedTotal > 50 ? 0 : 10,
+        tax: formattedCart.discountedTotal * 0.08,
+        grandTotal: formattedCart.discountedTotal + (formattedCart.discountedTotal > 50 ? 0 : 10) + (formattedCart.discountedTotal * 0.08)
+      },
+      coupon: formattedCart.coupon,
+      itemCount: formattedCart.itemCount
+    };
+
+    res.status(200).json({
+      success: true,
+      data: checkoutDetails,
+      message: 'Checkout details retrieved successfully'
+    });
+  });
+
+  /**
+   * POST /api/cart/bulk-update - Update multiple cart items at once
+   */
+  static bulkUpdateCart = asyncHandler(async (req, res) => {
+    const { updates } = req.body;
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    if (!updates || !Array.isArray(updates)) {
+      throw new HttpError('Updates array is required', 400);
+    }
+
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+    let needsSave = false;
+
+    for (const update of updates) {
+      const { itemId, quantity } = update;
+
+      if (!itemId || !mongoose.Types.ObjectId.isValid(itemId)) {
+        continue;
+      }
+
+      if (!quantity || quantity < 1) {
+        continue;
+      }
+
+      const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+     
+      if (itemIndex === -1) {
+        continue;
+      }
+
+      const cartItem = cart.items[itemIndex];
+
+      try {
+        await CartController.validateProduct(
+          cartItem.product._id.toString(),
+          cartItem.selectedColor,
+          cartItem.selectedSize,
+          quantity
+        );
+
+        cart.items[itemIndex].quantity = quantity;
+        cart.items[itemIndex].addedAt = new Date();
+       
+        if (userId && !cart.items[itemIndex].user) {
+          cart.items[itemIndex].user = userId;
+        }
+       
+        needsSave = true;
+      } catch (error) {
+        console.warn(`Skipping update for item ${itemId}: ${error.message}`);
+      }
+    }
+
+    if (needsSave) {
+      cart.lastUpdated = new Date();
+      await cart.save();
+     
+      await cart.populate({
+        path: 'items.product',
+        select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+      });
+    }
+
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
+      success: true,
+      data: formattedCart,
+      message: 'Cart updated successfully'
+    });
+  });
+
+  /**
+   * GET /api/cart/user-items - Get cart items for logged-in user only
+   */
+  static getUserCartItems = asyncHandler(async (req, res) => {
+    if (!req.user?._id) {
+      throw new HttpError('Authentication required', 401);
+    }
+
+    const userId = req.user._id;
+    const cart = await Cart.findOne({ user: userId })
+      .populate({
+        path: 'items.product',
+        select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+      });
+
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          items: [],
+          itemCount: 0,
+          subtotal: 0,
+          discountAmount: 0,
+          discountedTotal: 0
+        },
+        message: 'Cart is empty'
+      });
+    }
+
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
+      success: true,
+      data: formattedCart,
+      message: 'User cart items retrieved successfully'
+    });
+  });
+
+  /**
+   * POST /api/cart/migrate - Migrate cart from session to user (for login)
+   */
+  static migrateCart = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    if (!userId) {
+      throw new HttpError('User must be logged in to migrate cart', 401);
+    }
+
+    if (!sessionId) {
+      throw new HttpError('No session cart found to migrate', 400);
+    }
+
+    const cart = await CartController.mergeCarts(userId, sessionId);
+   
+    res.clearCookie('cartSessionId');
+   
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
+      success: true,
+      data: formattedCart,
+      message: 'Cart migrated successfully'
+    });
+  });
+
+  /**
    * POST /api/cart/sync - Sync session cart with user cart
    */
   static syncCarts = asyncHandler(async (req, res) => {
@@ -939,46 +1269,11 @@ class CartController {
       });
     }
 
-    // Merge carts logic here
-    const userCart = await Cart.findOne({ user: userId });
-    const sessionCart = await Cart.findOne({ sessionId });
-
-    if (sessionCart && sessionCart.items.length > 0) {
-      if (!userCart) {
-        sessionCart.user = userId;
-        sessionCart.sessionId = undefined;
-        await sessionCart.save();
-      } else {
-        for (const sessionItem of sessionCart.items) {
-          const existingItem = userCart.items.find(item =>
-            item.product.toString() === sessionItem.product.toString() &&
-            item.selectedColor === sessionItem.selectedColor &&
-            item.selectedSize === sessionItem.selectedSize
-          );
-          
-          if (existingItem) {
-            existingItem.quantity += sessionItem.quantity;
-          } else {
-            userCart.items.push(sessionItem);
-          }
-        }
-        userCart.lastUpdated = new Date();
-        await userCart.save();
-        await Cart.findByIdAndDelete(sessionCart._id);
-      }
-    }
+    const cart = await CartController.mergeCarts(userId, sessionId);
    
     res.clearCookie('cartSessionId');
-    
-    const finalCart = await CartController.getOrCreateCart(userId, null, false);
-    const formattedCart = finalCart ? CartController.formatCart(finalCart) : {
-      items: [],
-      itemCount: 0,
-      subtotal: 0,
-      discountAmount: 0,
-      discountedTotal: 0,
-      coupon: null
-    };
+   
+    const formattedCart = CartController.formatCart(cart);
 
     res.status(200).json({
       success: true,
@@ -986,6 +1281,116 @@ class CartController {
       message: 'Cart synced successfully'
     });
   });
+
+  /**
+   * Merge guest cart with user cart after login
+   */
+  static async mergeCarts(userId, sessionId) {
+    try {
+      if (!userId || !sessionId) {
+        throw new HttpError('User ID and session ID are required for cart merging', 400);
+      }
+
+      const userCart = await Cart.findOne({ user: userId })
+        .populate({
+          path: 'items.product',
+          select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+        });
+   
+      const guestCart = await Cart.findOne({ sessionId })
+        .populate({
+          path: 'items.product',
+          select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+        });
+
+      if (!guestCart || guestCart.items.length === 0) {
+        return userCart;
+      }
+
+      if (!userCart) {
+        guestCart.user = userId;
+        guestCart.sessionId = undefined;
+        await guestCart.save();
+        return guestCart;
+      }
+
+      for (const guestItem of guestCart.items) {
+        const existingItemIndex = userCart.items.findIndex(item =>
+          item.product._id.toString() === guestItem.product._id.toString() &&
+          item.selectedColor === guestItem.selectedColor &&
+          item.selectedSize === guestItem.selectedSize
+        );
+
+        if (existingItemIndex > -1) {
+          userCart.items[existingItemIndex].quantity += guestItem.quantity;
+          userCart.items[existingItemIndex].addedAt = new Date();
+        } else {
+          const newItem = {
+            ...guestItem.toObject(),
+            addedAt: new Date()
+          };
+          if (!newItem.user) {
+            newItem.user = userId;
+          }
+          userCart.items.push(newItem);
+        }
+      }
+
+      userCart.lastUpdated = new Date();
+      await userCart.save();
+     
+      await userCart.populate({
+        path: 'items.product',
+        select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+      });
+
+      await Cart.findByIdAndDelete(guestCart._id);
+
+      return userCart;
+    } catch (error) {
+      console.error('❌ Merge carts error:', error);
+      throw new HttpError(`Failed to merge carts: ${error.message}`, 500);
+    }
+  }
+
+  /**
+   * Helper method to clean cart items data (for existing cart data with objects)
+   */
+  static async cleanCartData() {
+    try {
+      const carts = await Cart.find({
+        $or: [
+          { 'items.selectedColor': { $type: 'object' } },
+          { 'items.selectedSize': { $type: 'object' } }
+        ]
+      });
+
+      for (const cart of carts) {
+        let needsUpdate = false;
+       
+        for (const item of cart.items) {
+          if (item.selectedColor && typeof item.selectedColor === 'object') {
+            item.selectedColor = item.selectedColor.value || item.selectedColor.hexCode || null;
+            needsUpdate = true;
+          }
+         
+          if (item.selectedSize && typeof item.selectedSize === 'object') {
+            item.selectedSize = item.selectedSize.value || null;
+            needsUpdate = true;
+          }
+        }
+       
+        if (needsUpdate) {
+          await cart.save();
+          console.log(`✅ Cleaned cart data for cart ID: ${cart._id}`);
+        }
+      }
+     
+      console.log(`✅ Cleaned ${carts.length} carts with object data`);
+    } catch (error) {
+      console.error('❌ Error cleaning cart data:', error);
+    }
+  }
 
   /**
    * Debug endpoint - Get all carts (development only)
