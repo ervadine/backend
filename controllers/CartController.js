@@ -132,14 +132,22 @@ static async getOrCreateCart(userId, sessionId, shouldCreate = false) {  // ← 
   /**
    * Set cart session cookie
    */
-  static setCartCookie(res, sessionId) {
-    res.cookie('cartSessionId', sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    });
-  }
+// In CartController.js - Update setCartCookie method
+static setCartCookie(res, sessionId) {
+  const isLocalhost = process.env.NODE_ENV !== 'production';
+  
+  const cookieOptions = {
+    httpOnly: true,
+    secure: !isLocalhost, // true in production, false in development
+    sameSite: isLocalhost ? 'lax' : 'none',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    path: '/',
+    domain: !isLocalhost ? '.onrender.com' : undefined
+  };
+  
+  res.cookie('cartSessionId', sessionId, cookieOptions);
+  console.log('🍪 Cart session cookie set:', { sessionId, options: cookieOptions });
+}
 
   /**
    * Extract string values from color and size objects
