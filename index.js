@@ -36,48 +36,48 @@ const allowedOrigins = ALLOWED_ORIGINS
 
 console.log('🔄 Allowed CORS origins:', allowedOrigins);
 
-// Enhanced CORS middleware - MUST BE FIRST MIDDLEWARE
+// In your main server file (where CORS is configured)
+// Update the CORS middleware
+
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl requests, Postman)
+    // Allow requests with no origin (like mobile apps, curl requests)
     if (!origin) return callback(null, true);
     
-    // Allow all localhost and 127.0.0.1 variations for Edge
-    if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('0.0.0.0')) {
+    // Allow all localhost variations
+    if (origin.includes('localhost') || 
+        origin.includes('127.0.0.1') || 
+        origin.includes('0.0.0.0') ||
+        origin.includes('192.168.') ||
+        origin.includes('10.0.0.')) {
       return callback(null, true);
     }
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('❌ CORS blocked for origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+    // Check against allowed origins
+    if (allowedOrigins.some(allowed => origin.includes(allowed))) {
+      return callback(null, true);
     }
+    
+    // For Render.com - allow any .onrender.com domain
+    if (origin.includes('.onrender.com')) {
+      return callback(null, true);
+    }
+    
+    console.log('❌ CORS blocked for origin:', origin);
+    callback(new Error('Not allowed by CORS'));
   },
+  credentials: true, // ✅ Important for cookies
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
     'Content-Type', 
     'Authorization', 
     'x-cart-session-id',
-    'x-requested-with',
     'Cookie',
-    'Cookies',
     'Accept',
     'Origin',
-    'X-Requested-With',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Credentials'
+    'X-Requested-With'
   ],
-  exposedHeaders: [
-    'Set-Cookie',
-    'Date',
-    'ETag',
-    'Content-Length',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Credentials',
-    'Content-Disposition'
-  ],
-  credentials: true,
+  exposedHeaders: ['Set-Cookie', 'x-cart-session-id'],
   preflightContinue: false,
   optionsSuccessStatus: 204,
   maxAge: 86400
