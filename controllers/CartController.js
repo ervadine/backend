@@ -587,120 +587,179 @@ static getCartCount = asyncHandler(async (req, res) => {
   /**
    * PUT /api/cart/update-item/:itemId - Update cart item quantity
    */
-  static updateCartItem = asyncHandler(async (req, res) => {
-    const { itemId } = req.params;
-    const { quantity } = req.body;
-    // FIXED: Using req.user?._id correctly
-    const userId = req.user?._id || null;
-    const sessionId = req.cookies?.cartSessionId;
+ static updateCartItem = asyncHandler(async (req, res) => {
+  const { itemId } = req.params;
+  const { quantity } = req.body;
+  const userId = req.user?._id || null;
+  const sessionId = req.cookies?.cartSessionId;
 
-    if (!quantity || quantity < 1) {
-      throw new HttpError('Valid quantity is required (minimum 1)', 400);
-    }
+  if (!quantity || quantity < 1) {
+    throw new HttpError('Valid quantity is required (minimum 1)', 400);
+  }
 
-    if (!mongoose.Types.ObjectId.isValid(itemId)) {
-      throw new HttpError('Invalid cart item ID', 400);
-    }
+  if (!mongoose.Types.ObjectId.isValid(itemId)) {
+    throw new HttpError('Invalid cart item ID', 400);
+  }
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
-    const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+  // FIX: Pass true to create cart if it doesn't exist
+  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+  
+  // FIX: Check if cart exists and has items
+  if (!cart || !cart.items || cart.items.length === 0) {
+    throw new HttpError('Cart is empty', 404);
+  }
 
-    if (itemIndex === -1) {
-      throw new HttpError('Cart item not found', 404);
-    }
+  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
 
-    const cartItem = cart.items[itemIndex];
+  if (itemIndex === -1) {
+    throw new HttpError('Cart item not found', 404);
+  }
 
-    // Check product stock
-    await CartController.validateProduct(
-      cartItem.product._id.toString(),
-      cartItem.selectedColor,
-      cartItem.selectedSize,
-      quantity
-    );
+  const cartItem = cart.items[itemIndex];
 
-    cart.items[itemIndex].quantity = quantity;
-    cart.items[itemIndex].addedAt = new Date(); // Update timestamp
-    cart.lastUpdated = new Date();
-    await cart.save();
-   
-    // Populate with limited fields
-    await cart.populate({
-      path: 'items.product',
-      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
-    });
-   
-    const formattedCart = CartController.formatCart(cart);
+  // Check product stock
+  await CartController.validateProduct(
+    cartItem.product._id.toString(),
+    cartItem.selectedColor,
+    cartItem.selectedSize,
+    quantity
+  );
 
-    res.status(200).json({
-      success: true,
-      data: formattedCart,
-      message: 'Cart item updated successfully'
-    });
+  cart.items[itemIndex].quantity = quantity;
+  cart.items[itemIndex].addedAt = new Date(); // Update timestamp
+  cart.lastUpdated = new Date();
+  await cart.save();
+ 
+  // Populate with limited fields
+  await cart.populate({
+    path: 'items.product',
+    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
   });
+ 
+  const formattedCart = CartController.formatCart(cart);
+
+  res.status(200).json({
+    success: true,
+    data: formattedCart,
+    message: 'Cart item updated successfully'
+  });
+});
 
   /**
    * DELETE /api/cart/delete-item/:itemId - Remove item from cart
    */
-  static removeFromCart = asyncHandler(async (req, res) => {
-    const { itemId } = req.params;
-    // FIXED: Using req.user?._id correctly
-    const userId = req.user?._id || null;
-    const sessionId = req.cookies?.cartSessionId;
+static removeFromCart = asyncHandler(async (req, res) => {
+  const { itemId } = req.params;
+  const userId = req.user?._id || null;
+  const sessionId = req.cookies?.cartSessionId;
 
-    if (!mongoose.Types.ObjectId.isValid(itemId)) {
-      throw new HttpError('Invalid cart item ID', 400);
-    }
+  if (!mongoose.Types.ObjectId.isValid(itemId)) {
+    throw new HttpError('Invalid cart item ID', 400);
+  }
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
-    const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
-
-    if (itemIndex === -1) {
-      throw new HttpError('Cart item not found', 404);
-    }
-
-    cart.items.splice(itemIndex, 1);
-    cart.lastUpdated = new Date();
-    await cart.save();
-   
-    // Populate with limited fields
-    await cart.populate({
-      path: 'items.product',
-      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
-    });
-   
-    const formattedCart = CartController.formatCart(cart);
-
-    res.status(200).json({
+  // FIX: Pass true to create cart if it doesn't exist
+  // Or handle the case when cart is null
+  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+  
+  // FIX: Check if cart exists
+  if (!cart) {
+    return res.status(200).json({
       success: true,
-      data: formattedCart,
-      message: 'Item removed from cart successfully'
+      data: {
+        items: [],
+        itemCount: 0,
+        subtotal: 0,
+        discountAmount: 0,
+        discountedTotal: 0,
+        coupon: null,
+        lastUpdated: new Date().toISOString()
+      },
+      message: 'Cart is empty'
     });
+  }
+
+  // FIX: Check if items array exists
+  if (!cart.items || cart.items.length === 0) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        items: [],
+        itemCount: 0,
+        subtotal: 0,
+        discountAmount: 0,
+        discountedTotal: 0,
+        coupon: cart.coupon || null,
+        lastUpdated: cart.lastUpdated?.toISOString() || new Date().toISOString()
+      },
+      message: 'Cart is already empty'
+    });
+  }
+
+  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+
+  if (itemIndex === -1) {
+    throw new HttpError('Cart item not found', 404);
+  }
+
+  cart.items.splice(itemIndex, 1);
+  cart.lastUpdated = new Date();
+  await cart.save();
+ 
+  // Populate with limited fields
+  await cart.populate({
+    path: 'items.product',
+    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
   });
+ 
+  const formattedCart = CartController.formatCart(cart);
+
+  res.status(200).json({
+    success: true,
+    data: formattedCart,
+    message: 'Item removed from cart successfully'
+  });
+});
 
   /**
    * DELETE /api/cart/clear-items - Clear entire cart
    */
-  static clearCart = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user?._id correctly
-    const userId = req.user?._id || null;
-    const sessionId = req.cookies?.cartSessionId;
+static clearCart = asyncHandler(async (req, res) => {
+  const userId = req.user?._id || null;
+  const sessionId = req.cookies?.cartSessionId;
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
-   
-    cart.items = [];
-    cart.coupon = undefined;
-    cart.lastUpdated = new Date();
-    await cart.save();
-
-    const formattedCart = CartController.formatCart(cart);
-
-    res.status(200).json({
+  // FIX: Pass true to create cart if it doesn't exist
+  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+  
+  // FIX: Check if cart exists
+  if (!cart) {
+    return res.status(200).json({
       success: true,
-      data: formattedCart,
-      message: 'Cart cleared successfully'
+      data: {
+        items: [],
+        itemCount: 0,
+        subtotal: 0,
+        discountAmount: 0,
+        discountedTotal: 0,
+        coupon: null,
+        lastUpdated: new Date().toISOString()
+      },
+      message: 'Cart is already empty'
     });
+  }
+ 
+  cart.items = [];
+  cart.coupon = undefined;
+  cart.lastUpdated = new Date();
+  await cart.save();
+
+  const formattedCart = CartController.formatCart(cart);
+
+  res.status(200).json({
+    success: true,
+    data: formattedCart,
+    message: 'Cart cleared successfully'
   });
+});
 
   /**
    * POST /api/cart/apply-coupon - Apply coupon to cart
