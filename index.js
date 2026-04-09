@@ -132,30 +132,38 @@ app.use(express.urlencoded({
   parameterLimit: 100000
 }));
 
-// Enhanced cookie settings middleware for localhost compatibility
+// Update the cookie middleware in your server file
 app.use((req, res, next) => {
   const originalCookie = res.cookie;
   
-  // Check if request is from localhost
+  // Detect if request is from localhost or production
   const isLocalhost = req.headers.origin?.includes('localhost') || 
-                      req.headers.origin?.includes('127.0.0.1');
+                      req.headers.origin?.includes('127.0.0.1') ||
+                      req.headers.origin?.includes('10.0.0.');
+  
+  // For Render.com - check if origin is from onrender.com
+  const isProduction = req.headers.origin?.includes('.onrender.com') || 
+                       process.env.NODE_ENV === 'production';
   
   res.cookie = function(name, value, options = {}) {
-    const edgeCompatibleOptions = {
+    const cookieOptions = {
       httpOnly: options.httpOnly !== undefined ? options.httpOnly : true,
-      secure: !isLocalhost && NODE_ENV === 'production',
-      sameSite: isLocalhost ? 'lax' : 'none',
+      secure: !isLocalhost && (isProduction || options.secure), // Only secure in production
+      sameSite: isLocalhost ? 'lax' : 'none', // 'none' for cross-origin
       maxAge: options.maxAge || 30 * 24 * 60 * 60 * 1000,
       path: options.path || '/',
-      domain: isLocalhost ? undefined : (NODE_ENV === 'production' ? '.onrender.com' : undefined),
+      domain: isProduction ? '.onrender.com' : undefined // For cross-subdomain cookies
     };
     
-    console.log(`🍪 Setting cookie: ${name}`, edgeCompatibleOptions);
-    return originalCookie.call(this, name, value, edgeCompatibleOptions);
+    console.log(`🍪 Setting cookie: ${name}`, {
+      ...cookieOptions,
+      value: value.substring(0, 20) + '...'
+    });
+    
+    return originalCookie.call(this, name, value, cookieOptions);
   };
   next();
 });
-
 // Enhanced logging middleware for debugging
 app.use((req, res, next) => {
   console.log('=== EDGE DEBUG REQUEST ===');
