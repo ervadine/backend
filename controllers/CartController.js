@@ -391,9 +391,7 @@ static async getOrCreateCart(userId, sessionId, shouldCreate = false) {  // ← 
 
 
 
-/**
- * GET /api/cart/items - Get user's cart with session ID in response
- */
+// In CartController.js - Fix the getCart method
 static getCart = asyncHandler(async (req, res) => {
   const userId = req.user?._id || null;
   let sessionId = req.cookies?.cartSessionId;
@@ -421,13 +419,18 @@ static getCart = asyncHandler(async (req, res) => {
         discountAmount: 0,
         discountedTotal: 0,
         coupon: null,
-        lastUpdated: new Date()
+        lastUpdated: new Date().toISOString() // ✅ Convert Date to ISO string
       },
       message: 'Cart retrieved successfully'
     });
   }
   
   const formattedCart = CartController.formatCart(cart);
+  
+  // Ensure all dates are converted to ISO strings
+  if (formattedCart.lastUpdated instanceof Date) {
+    formattedCart.lastUpdated = formattedCart.lastUpdated.toISOString();
+  }
   
   res.status(200).json({
     success: true,
