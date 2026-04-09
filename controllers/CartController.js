@@ -39,7 +39,7 @@ static validateAddToCartRequest(req, res, next) {
  
 
 
-static async getOrCreateCart(userId, sessionId, shouldCreate = false) {  // ← Changed to false
+static async getOrCreateCart(userId, sessionId, shouldCreate = false) {
   try {
     let cart;
     
@@ -97,7 +97,7 @@ static async getOrCreateCart(userId, sessionId, shouldCreate = false) {  // ← 
     }
 
     // Only process items if cart exists
-    if (cart) {
+    if (cart && cart.items) {
       const validItems = cart.items.filter(item =>
         item.product && item.product.isActive !== false
       );
@@ -648,6 +648,9 @@ static getCartCount = asyncHandler(async (req, res) => {
   /**
    * DELETE /api/cart/delete-item/:itemId - Remove item from cart
    */
+/**
+ * DELETE /api/cart/delete-item/:itemId - Remove item from cart
+ */
 static removeFromCart = asyncHandler(async (req, res) => {
   const { itemId } = req.params;
   const userId = req.user?._id || null;
@@ -657,15 +660,17 @@ static removeFromCart = asyncHandler(async (req, res) => {
     throw new HttpError('Invalid cart item ID', 400);
   }
 
-  // FIX: Pass true to create cart if it doesn't exist
-  // Or handle the case when cart is null
-  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+
+  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
   
-  // FIX: Check if cart exists
-  if (!cart) {
+  // FIX: If no cart exists or cart has no items, return empty cart response
+  if (!cart || !cart.items || cart.items.length === 0) {
     return res.status(200).json({
       success: true,
       data: {
+        _id: cart?._id || null,
+        user: userId,
+        sessionId: sessionId || null,
         items: [],
         itemCount: 0,
         subtotal: 0,
@@ -677,6 +682,31 @@ static removeFromCart = asyncHandler(async (req, res) => {
       message: 'Cart is empty'
     });
   }
+
+  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+
+  if (itemIndex === -1) {
+    throw new HttpError('Cart item not found', 404);
+  }
+
+  cart.items.splice(itemIndex, 1);
+  cart.lastUpdated = new Date();
+  await cart.save();
+ 
+  // Populate with limited fields
+  await cart.populate({
+    path: 'items.product',
+    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+  });
+ 
+  const formattedCart = CartController.formatCart(cart);
+
+  res.status(200).json({
+    success: true,
+    data: formattedCart,
+    message: 'Item removed from cart successfully'
+  });
+});
 
   // FIX: Check if items array exists
   if (!cart.items || cart.items.length === 0) {
