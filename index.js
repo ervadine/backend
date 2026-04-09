@@ -32,7 +32,7 @@ connectDB();
 // Configure allowed origins
 const allowedOriginsList = Array.isArray(ALLOWED_ORIGINS) 
   ? ALLOWED_ORIGINS 
-  : ['http://localhost:3000', 'http://127.0.0.1:3000', 'https://backend-x6tz.onrender.com', 'http://10.0.0.38:8280'];
+  : ['http://localhost:3000','https://www.darcollections.com','darcollections.com', 'http://127.0.0.1:3000', 'https://backend-x6tz.onrender.com', 'http://10.0.0.38:8280'];
 
 console.log('🔄 Allowed CORS origins:', allowedOriginsList);
 
