@@ -7,120 +7,115 @@ const mongoose = require('mongoose');
 
 class CartController {
 
-
-
   // Add this validation before adding items
-static validateAddToCartRequest(req, res, next) {
-  const { productId, quantity } = req.body;
-  
-  // Check if this is an automated/bot request
-  const userAgent = req.headers['user-agent'];
-  const isBot = /bot|crawler|spider|scraper/i.test(userAgent);
-  
-  if (isBot) {
-    throw new HttpError('Automated requests not allowed', 403);
+  static validateAddToCartRequest(req, res, next) {
+    const { productId, quantity } = req.body;
+    
+    // Check if this is an automated/bot request
+    const userAgent = req.headers['user-agent'];
+    const isBot = /bot|crawler|spider|scraper/i.test(userAgent);
+    
+    if (isBot) {
+      throw new HttpError('Automated requests not allowed', 403);
+    }
+    
+    // Check for rapid successive requests
+    const lastRequest = req.session?.lastCartRequest;
+    if (lastRequest && Date.now() - lastRequest < 1000) {
+      throw new HttpError('Too many requests', 429);
+    }
+    
+    req.session = req.session || {};
+    req.session.lastCartRequest = Date.now();
+    
+    next();
   }
-  
-  // Check for rapid successive requests
-  const lastRequest = req.session?.lastCartRequest;
-  if (lastRequest && Date.now() - lastRequest < 1000) {
-    throw new HttpError('Too many requests', 429);
-  }
-  
-  req.session = req.session || {};
-  req.session.lastCartRequest = Date.now();
-  
-  next();
-}
  
   /**
    * Get or create cart for user/session with optimized population
    */
- 
-
-
-static async getOrCreateCart(userId, sessionId, shouldCreate = false) {
-  try {
-    let cart;
-    
-    // Define fields to populate (only what's needed for cart)
-    const populateOptions = {
-      path: 'items.product',
-      select: '_id name price images seo isActive colors variants sizeConfig trackQuantity allowBackorder lowStockThreshold'
-    };
-    
-    // Priority 1: User cart (if user is logged in)
-    if (userId) {
-      cart = await Cart.findOne({ user: userId })
-        .populate(populateOptions)
+  static async getOrCreateCart(userId, sessionId, shouldCreate = false) {
+    try {
+      let cart;
       
-      // If no user cart found but session exists, check for session cart and convert it
-      if (!cart && sessionId) {
-        const sessionCart = await Cart.findOne({ sessionId })
-          .populate(populateOptions)
-        if (sessionCart) {
-          // Convert session cart to user cart
-          sessionCart.user = userId;
-          sessionCart.sessionId = undefined;
-          await sessionCart.save();
-          cart = sessionCart;
+      // Define fields to populate (only what's needed for cart)
+      const populateOptions = {
+        path: 'items.product',
+        select: '_id name price images seo isActive colors variants sizeConfig trackQuantity allowBackorder lowStockThreshold'
+      };
+      
+      // Priority 1: User cart (if user is logged in)
+      if (userId) {
+        cart = await Cart.findOne({ user: userId })
+          .populate(populateOptions);
+        
+        // If no user cart found but session exists, check for session cart and convert it
+        if (!cart && sessionId) {
+          const sessionCart = await Cart.findOne({ sessionId })
+            .populate(populateOptions);
+          if (sessionCart) {
+            // Convert session cart to user cart
+            sessionCart.user = userId;
+            sessionCart.sessionId = undefined;
+            await sessionCart.save();
+            cart = sessionCart;
+          }
         }
       }
-    }
-    
-    // Priority 2: Session cart (if no user cart found and user is not logged in)
-    if (!cart && sessionId && !userId) {
-      cart = await Cart.findOne({ sessionId })
-        .populate(populateOptions)
-    }
-
-    // Priority 3: Create new cart ONLY if shouldCreate is true
-    if (!cart && shouldCreate === true) {
-      console.log('🛒 Creating new cart for:', { userId, sessionId });
       
-      const cartData = {
-        items: [],
-        lastUpdated: new Date()
-      };
-
-      if (userId) {
-        cartData.user = userId;
-      } else if (sessionId) {
-        cartData.sessionId = sessionId;
-      } else {
-        return null;
+      // Priority 2: Session cart (if no user cart found and user is not logged in)
+      if (!cart && sessionId && !userId) {
+        cart = await Cart.findOne({ sessionId })
+          .populate(populateOptions);
       }
 
-      cart = new Cart(cartData);
-      await cart.save();
-      cart = await Cart.findById(cart._id).populate(populateOptions);
-    }
+      // Priority 3: Create new cart ONLY if shouldCreate is true
+      if (!cart && shouldCreate === true) {
+        console.log('🛒 Creating new cart for:', { userId, sessionId });
+        
+        const cartData = {
+          items: [],
+          lastUpdated: new Date()
+        };
 
-    // Only process items if cart exists
-    if (cart && cart.items) {
-      const validItems = cart.items.filter(item =>
-        item.product && item.product.isActive !== false
-      );
+        if (userId) {
+          cartData.user = userId;
+        } else if (sessionId) {
+          cartData.sessionId = sessionId;
+        } else {
+          return null;
+        }
 
-      if (validItems.length !== cart.items.length) {
-        cart.items = validItems;
-        cart.lastUpdated = new Date();
+        cart = new Cart(cartData);
         await cart.save();
         cart = await Cart.findById(cart._id).populate(populateOptions);
       }
-    }
 
-    return cart;
-  } catch (error) {
-    console.error('❌ Cart error:', error);
-    
-    if (error.code === 11000) {
-      return await CartController.getOrCreateCart(userId, sessionId, shouldCreate);
+      // Only process items if cart exists
+      if (cart && cart.items) {
+        const validItems = cart.items.filter(item =>
+          item.product && item.product.isActive !== false
+        );
+
+        if (validItems.length !== cart.items.length) {
+          cart.items = validItems;
+          cart.lastUpdated = new Date();
+          await cart.save();
+          cart = await Cart.findById(cart._id).populate(populateOptions);
+        }
+      }
+
+      return cart;
+    } catch (error) {
+      console.error('❌ Cart error:', error);
+      
+      if (error.code === 11000) {
+        return await CartController.getOrCreateCart(userId, sessionId, shouldCreate);
+      }
+      
+      return null;  // Return null instead of throwing
     }
-    
-    return null;  // Return null instead of throwing
   }
-}
 
   /**
    * Generate session ID for guest users
@@ -132,22 +127,21 @@ static async getOrCreateCart(userId, sessionId, shouldCreate = false) {
   /**
    * Set cart session cookie
    */
-// In CartController.js - Update setCartCookie method
-static setCartCookie(res, sessionId) {
-  const isLocalhost = process.env.NODE_ENV !== 'production';
-  
-  const cookieOptions = {
-    httpOnly: true,
-    secure: !isLocalhost, // true in production, false in development
-    sameSite: isLocalhost ? 'lax' : 'none',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-    path: '/',
-    domain: !isLocalhost ? '.onrender.com' : undefined
-  };
-  
-  res.cookie('cartSessionId', sessionId, cookieOptions);
-  console.log('🍪 Cart session cookie set:', { sessionId, options: cookieOptions });
-}
+  static setCartCookie(res, sessionId) {
+    const isLocalhost = process.env.NODE_ENV !== 'production';
+    
+    const cookieOptions = {
+      httpOnly: true,
+      secure: !isLocalhost, // true in production, false in development
+      sameSite: isLocalhost ? 'lax' : 'none',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+      domain: !isLocalhost ? '.onrender.com' : undefined
+    };
+    
+    res.cookie('cartSessionId', sessionId, cookieOptions);
+    console.log('🍪 Cart session cookie set:', { sessionId, options: cookieOptions });
+  }
 
   /**
    * Extract string values from color and size objects
@@ -396,407 +390,360 @@ static setCartCookie(res, sessionId) {
     };
   }
 
+  /**
+   * GET /api/cart/items - Get user's cart
+   */
+  static getCart = asyncHandler(async (req, res) => {
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    // Also check headers for session ID (for localStorage fallback)
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+      console.log('📦 Using session ID from header:', sessionId);
+    }
 
-
-
-// In CartController.js - Fix the getCart method
-static getCart = asyncHandler(async (req, res) => {
-  const userId = req.user?._id || null;
-  let sessionId = req.cookies?.cartSessionId;
-  
-  // Also check headers for session ID (for localStorage fallback)
-  if (!sessionId && req.headers['x-cart-session-id']) {
-    sessionId = req.headers['x-cart-session-id'];
-    console.log('📦 Using session ID from header:', sessionId);
-  }
-
-  // Pass false to NOT create a cart automatically
-  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
-  
-  // If no cart exists, return empty cart response
-  if (!cart) {
-    return res.status(200).json({
+    // Pass false to NOT create a cart automatically
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    // If no cart exists, return empty cart response
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          _id: null,
+          user: userId,
+          sessionId: sessionId || null,
+          items: [],
+          itemCount: 0,
+          subtotal: 0,
+          discountAmount: 0,
+          discountedTotal: 0,
+          coupon: null,
+          lastUpdated: new Date().toISOString()
+        },
+        message: 'Cart retrieved successfully'
+      });
+    }
+    
+    const formattedCart = CartController.formatCart(cart);
+    
+    // Ensure all dates are converted to ISO strings
+    if (formattedCart.lastUpdated instanceof Date) {
+      formattedCart.lastUpdated = formattedCart.lastUpdated.toISOString();
+    }
+    
+    res.status(200).json({
       success: true,
       data: {
-        _id: null,
-        user: userId,
-        sessionId: sessionId || null,
-        items: [],
-        itemCount: 0,
-        subtotal: 0,
-        discountAmount: 0,
-        discountedTotal: 0,
-        coupon: null,
-        lastUpdated: new Date().toISOString() // ✅ Convert Date to ISO string
+        ...formattedCart,
+        sessionId: sessionId // Return session ID for localStorage
       },
       message: 'Cart retrieved successfully'
     });
-  }
-  
-  const formattedCart = CartController.formatCart(cart);
-  
-  // Ensure all dates are converted to ISO strings
-  if (formattedCart.lastUpdated instanceof Date) {
-    formattedCart.lastUpdated = formattedCart.lastUpdated.toISOString();
-  }
-  
-  res.status(200).json({
-    success: true,
-    data: {
-      ...formattedCart,
-      sessionId: sessionId // Return session ID for localStorage
-    },
-    message: 'Cart retrieved successfully'
   });
-});
 
-/**
- * POST /api/cart/add-item - Add item to cart with session ID in response
- */
-static addToCart = asyncHandler(async (req, res) => {
-  const { productId, selectedColor, selectedSize, quantity = 1 } = req.body;
-  const userId = req.user?._id || null;
-  let sessionId = req.cookies?.cartSessionId;
-  
-  // Also check headers for session ID
-  if (!sessionId && req.headers['x-cart-session-id']) {
-    sessionId = req.headers['x-cart-session-id'];
-    console.log('📦 Using session ID from header for add:', sessionId);
-  }
-
-  // Validate required fields
-  if (!productId) {
-    throw new HttpError('Product ID is required', 400);
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(productId)) {
-    throw new HttpError('Invalid product ID', 400);
-  }
-
-  // Generate session ID for guest users if it doesn't exist
-  if (!sessionId && !userId) {
-    sessionId = CartController.generateSessionId();
-    CartController.setCartCookie(res, sessionId);
-    console.log('🆕 Generated new session ID:', sessionId);
-  }
-
-  // Extract string values from objects if needed
-  const { colorValue, sizeValue } = CartController.extractSelectionValues(selectedColor, selectedSize);
-
-  // Validate product and get price
-  const product = await CartController.validateProduct(
-    productId, colorValue, sizeValue, quantity
-  );
-
-  // Pass true to create cart if it doesn't exist
-  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
-  
-  if (!cart) {
-    throw new HttpError('Unable to create or retrieve cart', 500);
-  }
-
-  // Check if item already exists in cart
-  const existingItemIndex = cart.items.findIndex(item =>
-    item.product._id.toString() === productId &&
-    item.selectedColor === colorValue &&
-    item.selectedSize === sizeValue
-  );
-
-  if (existingItemIndex > -1) {
-    const newQuantity = cart.items[existingItemIndex].quantity + quantity;
+  /**
+   * POST /api/cart/add-item - Add item to cart with session ID in response
+   */
+  static addToCart = asyncHandler(async (req, res) => {
+    const { productId, selectedColor, selectedSize, quantity = 1 } = req.body;
+    const userId = req.user?._id || null;
+    let sessionId = req.cookies?.cartSessionId;
     
-    await CartController.validateProduct(productId, colorValue, sizeValue, newQuantity);
-    
-    cart.items[existingItemIndex].quantity = newQuantity;
-    cart.items[existingItemIndex].addedAt = new Date();
-  } else {
-    const cartItem = {
-      product: productId,
-      selectedColor: colorValue || null,
-      selectedSize: sizeValue || null,
-      quantity,
-      price: product.price,
-      addedAt: new Date()
-    };
-
-    if (userId) {
-      cartItem.user = userId;
+    // Also check headers for session ID
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+      console.log('📦 Using session ID from header for add:', sessionId);
     }
 
-    cart.items.push(cartItem);
-  }
+    // Validate required fields
+    if (!productId) {
+      throw new HttpError('Product ID is required', 400);
+    }
 
-  cart.lastUpdated = new Date();
-  await cart.save();
-  
-  await cart.populate({
-    path: 'items.product',
-    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
-  });
-  
-  const formattedCart = CartController.formatCart(cart);
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      throw new HttpError('Invalid product ID', 400);
+    }
 
-  res.status(201).json({
-    success: true,
-    data: {
-      ...formattedCart,
-      sessionId: sessionId // Return session ID for localStorage
-    },
-    message: 'Item added to cart successfully'
-  });
-});
+    // Generate session ID for guest users if it doesn't exist
+    if (!sessionId && !userId) {
+      sessionId = CartController.generateSessionId();
+      CartController.setCartCookie(res, sessionId);
+      console.log('🆕 Generated new session ID:', sessionId);
+    }
 
-/**
- * GET /api/cart/count - Get cart count with session support
- */
-static getCartCount = asyncHandler(async (req, res) => {
-  const userId = req.user?._id;
-  let sessionId = req.cookies?.cartSessionId;
-  
-  // Also check headers for session ID
-  if (!sessionId && req.headers['x-cart-session-id']) {
-    sessionId = req.headers['x-cart-session-id'];
-  }
+    // Extract string values from objects if needed
+    const { colorValue, sizeValue } = CartController.extractSelectionValues(selectedColor, selectedSize);
 
-  // Pass false to NOT create a cart
-  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
-  
-  if (!cart) {
-    return res.status(200).json({
+    // Validate product and get price
+    const product = await CartController.validateProduct(
+      productId, colorValue, sizeValue, quantity
+    );
+
+    // Pass true to create cart if it doesn't exist
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+    
+    if (!cart) {
+      throw new HttpError('Unable to create or retrieve cart', 500);
+    }
+
+    // Check if item already exists in cart
+    const existingItemIndex = cart.items.findIndex(item =>
+      item.product._id.toString() === productId &&
+      item.selectedColor === colorValue &&
+      item.selectedSize === sizeValue
+    );
+
+    if (existingItemIndex > -1) {
+      const newQuantity = cart.items[existingItemIndex].quantity + quantity;
+      
+      await CartController.validateProduct(productId, colorValue, sizeValue, newQuantity);
+      
+      cart.items[existingItemIndex].quantity = newQuantity;
+      cart.items[existingItemIndex].addedAt = new Date();
+    } else {
+      const cartItem = {
+        product: productId,
+        selectedColor: colorValue || null,
+        selectedSize: sizeValue || null,
+        quantity,
+        price: product.price,
+        addedAt: new Date()
+      };
+
+      if (userId) {
+        cartItem.user = userId;
+      }
+
+      cart.items.push(cartItem);
+    }
+
+    cart.lastUpdated = new Date();
+    await cart.save();
+    
+    await cart.populate({
+      path: 'items.product',
+      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+    });
+    
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(201).json({
       success: true,
       data: {
-        itemCount: 0,
-        uniqueItems: 0,
+        ...formattedCart,
+        sessionId: sessionId // Return session ID for localStorage
+      },
+      message: 'Item added to cart successfully'
+    });
+  });
+
+  /**
+   * GET /api/cart/count - Get cart count with session support
+   */
+  static getCartCount = asyncHandler(async (req, res) => {
+    const userId = req.user?._id;
+    let sessionId = req.cookies?.cartSessionId;
+    
+    // Also check headers for session ID
+    if (!sessionId && req.headers['x-cart-session-id']) {
+      sessionId = req.headers['x-cart-session-id'];
+    }
+
+    // Pass false to NOT create a cart
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          itemCount: 0,
+          uniqueItems: 0,
+          sessionId: sessionId
+        },
+        message: 'Cart count retrieved successfully'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        itemCount: cart.itemCount,
+        uniqueItems: cart.items.length,
         sessionId: sessionId
       },
       message: 'Cart count retrieved successfully'
     });
-  }
-  
-  res.status(200).json({
-    success: true,
-    data: {
-      itemCount: cart.itemCount,
-      uniqueItems: cart.items.length,
-      sessionId: sessionId
-    },
-    message: 'Cart count retrieved successfully'
   });
-});
 
   /**
    * PUT /api/cart/update-item/:itemId - Update cart item quantity
    */
- static updateCartItem = asyncHandler(async (req, res) => {
-  const { itemId } = req.params;
-  const { quantity } = req.body;
-  const userId = req.user?._id || null;
-  const sessionId = req.cookies?.cartSessionId;
+  static updateCartItem = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+    const { quantity } = req.body;
+    const userId = req.user?._id || null;
+    const sessionId = req.cookies?.cartSessionId;
 
-  if (!quantity || quantity < 1) {
-    throw new HttpError('Valid quantity is required (minimum 1)', 400);
-  }
+    if (!quantity || quantity < 1) {
+      throw new HttpError('Valid quantity is required (minimum 1)', 400);
+    }
 
-  if (!mongoose.Types.ObjectId.isValid(itemId)) {
-    throw new HttpError('Invalid cart item ID', 400);
-  }
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      throw new HttpError('Invalid cart item ID', 400);
+    }
 
-  // FIX: Pass true to create cart if it doesn't exist
-  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
-  
-  // FIX: Check if cart exists and has items
-  if (!cart || !cart.items || cart.items.length === 0) {
-    throw new HttpError('Cart is empty', 404);
-  }
+    // Pass true to create cart if it doesn't exist
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+    
+    // Check if cart exists and has items
+    if (!cart || !cart.items || cart.items.length === 0) {
+      throw new HttpError('Cart is empty', 404);
+    }
 
-  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+    const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
 
-  if (itemIndex === -1) {
-    throw new HttpError('Cart item not found', 404);
-  }
+    if (itemIndex === -1) {
+      throw new HttpError('Cart item not found', 404);
+    }
 
-  const cartItem = cart.items[itemIndex];
+    const cartItem = cart.items[itemIndex];
 
-  // Check product stock
-  await CartController.validateProduct(
-    cartItem.product._id.toString(),
-    cartItem.selectedColor,
-    cartItem.selectedSize,
-    quantity
-  );
+    // Check product stock
+    await CartController.validateProduct(
+      cartItem.product._id.toString(),
+      cartItem.selectedColor,
+      cartItem.selectedSize,
+      quantity
+    );
 
-  cart.items[itemIndex].quantity = quantity;
-  cart.items[itemIndex].addedAt = new Date(); // Update timestamp
-  cart.lastUpdated = new Date();
-  await cart.save();
- 
-  // Populate with limited fields
-  await cart.populate({
-    path: 'items.product',
-    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+    cart.items[itemIndex].quantity = quantity;
+    cart.items[itemIndex].addedAt = new Date();
+    cart.lastUpdated = new Date();
+    await cart.save();
+   
+    // Populate with limited fields
+    await cart.populate({
+      path: 'items.product',
+      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
+    });
+   
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
+      success: true,
+      data: formattedCart,
+      message: 'Cart item updated successfully'
+    });
   });
- 
-  const formattedCart = CartController.formatCart(cart);
-
-  res.status(200).json({
-    success: true,
-    data: formattedCart,
-    message: 'Cart item updated successfully'
-  });
-});
 
   /**
    * DELETE /api/cart/delete-item/:itemId - Remove item from cart
    */
-/**
- * DELETE /api/cart/delete-item/:itemId - Remove item from cart
- */
-static removeFromCart = asyncHandler(async (req, res) => {
-  const { itemId } = req.params;
-  const userId = req.user?._id || null;
-  const sessionId = req.cookies?.cartSessionId;
+  static removeFromCart = asyncHandler(async (req, res) => {
+    const { itemId } = req.params;
+    const userId = req.user?._id || null;
+    const sessionId = req.cookies?.cartSessionId;
 
-  if (!mongoose.Types.ObjectId.isValid(itemId)) {
-    throw new HttpError('Invalid cart item ID', 400);
-  }
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      throw new HttpError('Invalid cart item ID', 400);
+    }
 
+    // Pass false to NOT create a cart if it doesn't exist
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    // If no cart exists or cart has no items, return empty cart response
+    if (!cart || !cart.items || cart.items.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          _id: cart?._id || null,
+          user: userId,
+          sessionId: sessionId || null,
+          items: [],
+          itemCount: 0,
+          subtotal: 0,
+          discountAmount: 0,
+          discountedTotal: 0,
+          coupon: null,
+          lastUpdated: new Date().toISOString()
+        },
+        message: 'Cart is empty'
+      });
+    }
 
-  const cart = await CartController.getOrCreateCart(userId, sessionId, false);
-  
-  // FIX: If no cart exists or cart has no items, return empty cart response
-  if (!cart || !cart.items || cart.items.length === 0) {
-    return res.status(200).json({
-      success: true,
-      data: {
-        _id: cart?._id || null,
-        user: userId,
-        sessionId: sessionId || null,
-        items: [],
-        itemCount: 0,
-        subtotal: 0,
-        discountAmount: 0,
-        discountedTotal: 0,
-        coupon: null,
-        lastUpdated: new Date().toISOString()
-      },
-      message: 'Cart is empty'
+    const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
+
+    if (itemIndex === -1) {
+      throw new HttpError('Cart item not found', 404);
+    }
+
+    cart.items.splice(itemIndex, 1);
+    cart.lastUpdated = new Date();
+    await cart.save();
+   
+    // Populate with limited fields
+    await cart.populate({
+      path: 'items.product',
+      select: '_id name price images seo isActive trackQuantity colors sizeConfig'
     });
-  }
+   
+    const formattedCart = CartController.formatCart(cart);
 
-  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
-
-  if (itemIndex === -1) {
-    throw new HttpError('Cart item not found', 404);
-  }
-
-  cart.items.splice(itemIndex, 1);
-  cart.lastUpdated = new Date();
-  await cart.save();
- 
-  // Populate with limited fields
-  await cart.populate({
-    path: 'items.product',
-    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
-  });
- 
-  const formattedCart = CartController.formatCart(cart);
-
-  res.status(200).json({
-    success: true,
-    data: formattedCart,
-    message: 'Item removed from cart successfully'
-  });
-});
-
-  // FIX: Check if items array exists
-  if (!cart.items || cart.items.length === 0) {
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      data: {
-        items: [],
-        itemCount: 0,
-        subtotal: 0,
-        discountAmount: 0,
-        discountedTotal: 0,
-        coupon: cart.coupon || null,
-        lastUpdated: cart.lastUpdated?.toISOString() || new Date().toISOString()
-      },
-      message: 'Cart is already empty'
+      data: formattedCart,
+      message: 'Item removed from cart successfully'
     });
-  }
-
-  const itemIndex = cart.items.findIndex(item => item._id.toString() === itemId);
-
-  if (itemIndex === -1) {
-    throw new HttpError('Cart item not found', 404);
-  }
-
-  cart.items.splice(itemIndex, 1);
-  cart.lastUpdated = new Date();
-  await cart.save();
- 
-  // Populate with limited fields
-  await cart.populate({
-    path: 'items.product',
-    select: '_id name price images seo isActive trackQuantity colors sizeConfig'
   });
- 
-  const formattedCart = CartController.formatCart(cart);
-
-  res.status(200).json({
-    success: true,
-    data: formattedCart,
-    message: 'Item removed from cart successfully'
-  });
-});
 
   /**
    * DELETE /api/cart/clear-items - Clear entire cart
    */
-static clearCart = asyncHandler(async (req, res) => {
-  const userId = req.user?._id || null;
-  const sessionId = req.cookies?.cartSessionId;
+  static clearCart = asyncHandler(async (req, res) => {
+    const userId = req.user?._id || null;
+    const sessionId = req.cookies?.cartSessionId;
 
-  // FIX: Pass true to create cart if it doesn't exist
-  const cart = await CartController.getOrCreateCart(userId, sessionId, true);
-  
-  // FIX: Check if cart exists
-  if (!cart) {
-    return res.status(200).json({
+    // Pass true to create cart if it doesn't exist
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
+    
+    // Check if cart exists
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          items: [],
+          itemCount: 0,
+          subtotal: 0,
+          discountAmount: 0,
+          discountedTotal: 0,
+          coupon: null,
+          lastUpdated: new Date().toISOString()
+        },
+        message: 'Cart is already empty'
+      });
+    }
+   
+    cart.items = [];
+    cart.coupon = undefined;
+    cart.lastUpdated = new Date();
+    await cart.save();
+
+    const formattedCart = CartController.formatCart(cart);
+
+    res.status(200).json({
       success: true,
-      data: {
-        items: [],
-        itemCount: 0,
-        subtotal: 0,
-        discountAmount: 0,
-        discountedTotal: 0,
-        coupon: null,
-        lastUpdated: new Date().toISOString()
-      },
-      message: 'Cart is already empty'
+      data: formattedCart,
+      message: 'Cart cleared successfully'
     });
-  }
- 
-  cart.items = [];
-  cart.coupon = undefined;
-  cart.lastUpdated = new Date();
-  await cart.save();
-
-  const formattedCart = CartController.formatCart(cart);
-
-  res.status(200).json({
-    success: true,
-    data: formattedCart,
-    message: 'Cart cleared successfully'
   });
-});
 
   /**
    * POST /api/cart/apply-coupon - Apply coupon to cart
    */
   static applyCoupon = asyncHandler(async (req, res) => {
     const { couponCode } = req.body;
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
@@ -824,7 +771,7 @@ static clearCart = asyncHandler(async (req, res) => {
       throw new HttpError('Coupon usage limit exceeded', 400);
     }
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
 
     // Check if cart is empty
     if (cart.items.length === 0) {
@@ -874,11 +821,10 @@ static clearCart = asyncHandler(async (req, res) => {
    * DELETE /api/cart/remove-coupon - Remove coupon from cart
    */
   static removeCoupon = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
 
     if (!cart.coupon) {
       throw new HttpError('No coupon applied to cart', 400);
@@ -907,11 +853,30 @@ static clearCart = asyncHandler(async (req, res) => {
    * GET /api/cart/summary - Get cart summary
    */
   static getCartSummary = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          itemCount: 0,
+          subtotal: 0,
+          totalPrice: 0,
+          discountAmount: 0,
+          discountedTotal: 0,
+          items: [],
+          coupon: null,
+          savings: 0,
+          shippingEstimate: 0,
+          taxEstimate: 0
+        },
+        message: 'Cart summary retrieved successfully'
+      });
+    }
+    
     const formattedCart = CartController.formatCart(cart);
 
     const summary = {
@@ -1026,18 +991,10 @@ static clearCart = asyncHandler(async (req, res) => {
   }
 
   /**
-   * Get cart count (for badge/header display)
-   */
-
-
-  
-
-  /**
    * Check if product is in cart
    */
   static checkProductInCart = asyncHandler(async (req, res) => {
     const { productId, selectedColor, selectedSize } = req.query;
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id;
     const sessionId = req.cookies?.cartSessionId;
 
@@ -1052,7 +1009,19 @@ static clearCart = asyncHandler(async (req, res) => {
     // Extract string values from objects if needed
     const { colorValue, sizeValue } = CartController.extractSelectionValues(selectedColor, selectedSize);
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          isInCart: false,
+          quantity: 0,
+          cartItemId: null
+        },
+        message: 'Product cart status retrieved successfully'
+      });
+    }
    
     const isInCart = cart.items.some(item =>
       item.product._id.toString() === productId &&
@@ -1081,11 +1050,23 @@ static clearCart = asyncHandler(async (req, res) => {
    * Validate cart before checkout
    */
   static validateCart = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
+    
+    if (!cart) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          isValid: false,
+          errors: ['Cart is empty'],
+          warnings: [],
+          updatedItems: []
+        },
+        message: 'Cart validation completed'
+      });
+    }
    
     const validationResults = {
       isValid: true,
@@ -1198,7 +1179,6 @@ static clearCart = asyncHandler(async (req, res) => {
    * POST /api/cart/migrate - Migrate cart from session to user (for login)
    */
   static migrateCart = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user._id correctly
     const userId = req.user._id;
     const sessionId = req.cookies?.cartSessionId;
 
@@ -1228,21 +1208,13 @@ static clearCart = asyncHandler(async (req, res) => {
    * GET /api/cart/checkout-details - Get cart details for checkout
    */
   static getCheckoutDetails = asyncHandler(async (req, res) => {
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, false);
    
-    if (cart.items.length === 0) {
+    if (!cart || cart.items.length === 0) {
       throw new HttpError('Cart is empty', 400);
-    }
-
-    // Validate all items
-    const validation = await CartController.validateCart(req, res, true);
-   
-    if (!validation.isValid) {
-      throw new HttpError('Cart validation failed', 400);
     }
 
     const formattedCart = CartController.formatCart(cart);
@@ -1274,7 +1246,6 @@ static clearCart = asyncHandler(async (req, res) => {
    */
   static bulkUpdateCart = asyncHandler(async (req, res) => {
     const { updates } = req.body;
-    // FIXED: Using req.user?._id correctly
     const userId = req.user?._id || null;
     const sessionId = req.cookies?.cartSessionId;
 
@@ -1282,7 +1253,7 @@ static clearCart = asyncHandler(async (req, res) => {
       throw new HttpError('Updates array is required', 400);
     }
 
-    const cart = await CartController.getOrCreateCart(userId, sessionId);
+    const cart = await CartController.getOrCreateCart(userId, sessionId, true);
     let needsSave = false;
 
     for (const update of updates) {
@@ -1400,8 +1371,15 @@ static clearCart = asyncHandler(async (req, res) => {
 
     if (!sessionId) {
       // Just return user cart if no session exists 
-      const cart = await CartController.getOrCreateCart(userId, null);
-      const formattedCart = CartController.formatCart(cart);
+      const cart = await CartController.getOrCreateCart(userId, null, false);
+      const formattedCart = cart ? CartController.formatCart(cart) : {
+        items: [],
+        itemCount: 0,
+        subtotal: 0,
+        discountAmount: 0,
+        discountedTotal: 0,
+        coupon: null
+      };
      
       return res.status(200).json({
         success: true,
@@ -1427,7 +1405,3 @@ static clearCart = asyncHandler(async (req, res) => {
 }
 
 module.exports = CartController;
-
-
-
-
